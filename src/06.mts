@@ -1,7 +1,6 @@
 import { Array, Option, Result } from "@swan-io/boxed";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { match } from "ts-pattern";
 
 const input = readFileSync(
   path.join(import.meta.dirname, "./input/06.txt"),
@@ -10,20 +9,43 @@ const input = readFileSync(
 
 type Direction = "Up" | "Down" | "Left" | "Right";
 
-const OBSTACLE = "#";
-const lines = input.split("\n");
-const rowHeight = lines.length;
-const lineWidth = Option.fromNullable(lines.at(0)).map(line => line.length);
-
 type Position = { x: number; y: number; direction: Direction };
 
+const OBSTACLE = "#";
+
+const lines = input.split("\n");
+const rowHeight = lines.length;
+
+const lineWidth = Option.fromNullable(lines.at(0))
+  .map(line => line.length)
+  .toUndefined();
+
+const initialGuardPosition = Array.findMap(
+  lines.map((item, index) => [item, index] as const),
+  ([line, lineIndex]) => {
+    const index = line.indexOf("^");
+    if (index === -1) {
+      return Option.None();
+    }
+    const position: Position = { x: index, y: lineIndex, direction: "Up" };
+    return Option.Some(position);
+  },
+).toUndefined();
+
+if (lineWidth === undefined || initialGuardPosition === undefined) {
+  process.exit(1);
+}
+
+const RIGHT_SHIFT_MAP = {
+  Up: "Right" as const,
+  Right: "Down" as const,
+  Down: "Left" as const,
+  Left: "Up" as const,
+};
+
 const visit = ({
-  initialGuardPosition,
-  lineWidth,
   additionalObstacle,
 }: {
-  initialGuardPosition: Position;
-  lineWidth: number;
   additionalObstacle?: { x: number; y: number };
 }): Result<
   { visited: Set<number>; visitedWithDirection: Set<Position> },
@@ -35,28 +57,15 @@ const visit = ({
 
   const currentPosition = { ...initialGuardPosition };
 
-  const shiftRight = () => {
-    const nextDirection = match(currentPosition.direction)
-      .returnType<Direction>()
-      .with("Up", () => "Right")
-      .with("Right", () => "Down")
-      .with("Down", () => "Left")
-      .with("Left", () => "Up")
-      .exhaustive();
-    currentPosition.direction = nextDirection;
-  };
-
   const get = (x: number, y: number) => {
     if (
       additionalObstacle != null &&
       additionalObstacle.x === currentPosition.x + x &&
       additionalObstacle.y === currentPosition.y + y
     ) {
-      return Option.Some(OBSTACLE);
+      return OBSTACLE;
     }
-    return Option.fromNullable(lines[currentPosition.y + y]).flatMap(line =>
-      Option.fromNullable(line[currentPosition.x + x]),
-    );
+    return lines[currentPosition.y + y]?.[currentPosition.x + x];
   };
 
   while (
@@ -75,47 +84,46 @@ const visit = ({
     }
     visitedWithDirectionSerialized.add(currentPositionSerialized);
 
-    match(currentPosition.direction)
-      .with("Up", () =>
-        match(get(0, -1))
-          .with(Option.P.Some(OBSTACLE), () => shiftRight())
-          .otherwise(() => (currentPosition.y -= 1)),
-      )
-      .with("Right", () =>
-        match(get(1, 0))
-          .with(Option.P.Some(OBSTACLE), () => shiftRight())
-          .otherwise(() => (currentPosition.x += 1)),
-      )
-      .with("Down", () =>
-        match(get(0, 1))
-          .with(Option.P.Some(OBSTACLE), () => shiftRight())
-          .otherwise(() => (currentPosition.y += 1)),
-      )
-      .with("Left", () =>
-        match(get(-1, 0))
-          .with(Option.P.Some(OBSTACLE), () => shiftRight())
-          .otherwise(() => (currentPosition.x -= 1)),
-      );
+    switch (currentPosition.direction) {
+      case "Up":
+        if (get(0, -1) === OBSTACLE) {
+          currentPosition.direction =
+            RIGHT_SHIFT_MAP[currentPosition.direction];
+        } else {
+          currentPosition.y -= 1;
+        }
+        break;
+      case "Right":
+        if (get(1, 0) === OBSTACLE) {
+          currentPosition.direction =
+            RIGHT_SHIFT_MAP[currentPosition.direction];
+        } else {
+          currentPosition.x += 1;
+        }
+        break;
+      case "Down":
+        if (get(0, 1) === OBSTACLE) {
+          currentPosition.direction =
+            RIGHT_SHIFT_MAP[currentPosition.direction];
+        } else {
+          currentPosition.y += 1;
+        }
+        break;
+      case "Left":
+        if (get(-1, 0) === OBSTACLE) {
+          currentPosition.direction =
+            RIGHT_SHIFT_MAP[currentPosition.direction];
+        } else {
+          currentPosition.x -= 1;
+        }
+        break;
+    }
   }
   return Result.Ok({ visited, visitedWithDirection });
 };
 
-const initialGuardPosition = Array.findMap(
-  lines.map((item, index) => [item, index] as const),
-  ([line, lineIndex]) => {
-    const index = line.indexOf("^");
-    if (index === -1) {
-      return Option.None();
-    }
-    const position: Position = { x: index, y: lineIndex, direction: "Up" };
-    return Option.Some(position);
-  },
-);
-
 const part1 = () => {
-  return Option.allFromDict({ initialGuardPosition, lineWidth })
-    .toResult(new Error("No data"))
-    .flatMap(visit)
+  return visit({})
     .map(({ visited }) => visited.size)
     .getOr(0);
 };
@@ -123,9 +131,7 @@ const part1 = () => {
 console.log("Part 1", part1());
 
 const getAbs = (x: number, y: number) => {
-  return Option.fromNullable(lines[y]).flatMap(line =>
-    Option.fromNullable(line[x]),
-  );
+  return lines[y]?.[x];
 };
 
 const deduplicatePositions = (array: Array<{ x: number; y: number }>) => {
@@ -143,54 +149,52 @@ const deduplicatePositions = (array: Array<{ x: number; y: number }>) => {
 };
 
 const part2 = () => {
-  return Option.allFromDict({ initialGuardPosition, lineWidth })
-    .toResult(new Error("No data"))
-    .flatMap(({ initialGuardPosition, lineWidth }) =>
-      visit({ initialGuardPosition, lineWidth }).map(values => ({
-        ...values,
-        initialGuardPosition,
-        lineWidth,
-      })),
-    )
-    .map(({ visitedWithDirection, initialGuardPosition, lineWidth }) => {
+  return visit({})
+    .map(({ visitedWithDirection }) => {
       const visited = [...visitedWithDirection];
       const potentialPositions = Array.filterMap(
         visited,
         ({ x, y, direction }) => {
-          return match(direction)
-            .with("Up", () =>
-              match(getAbs(x, y - 1))
-                .with(Option.P.Some(OBSTACLE), () => Option.None())
-                .with(Option.P.None, () => Option.None())
-                .otherwise(() => Option.Some({ x, y: y - 1 })),
-            )
-            .with("Right", () =>
-              match(getAbs(x + 1, y))
-                .with(Option.P.Some(OBSTACLE), () => Option.None())
-                .with(Option.P.None, () => Option.None())
-                .otherwise(() => Option.Some({ x: x + 1, y })),
-            )
-            .with("Down", () =>
-              match(getAbs(x, y + 1))
-                .with(Option.P.Some(OBSTACLE), () => Option.None())
-                .with(Option.P.None, () => Option.None())
-                .otherwise(() => Option.Some({ x, y: y + 1 })),
-            )
-            .with("Left", () =>
-              match(getAbs(x - 1, y))
-                .with(Option.P.Some(OBSTACLE), () => Option.None())
-                .with(Option.P.None, () => Option.None())
-                .otherwise(() => Option.Some({ x: x - 1, y })),
-            )
-            .exhaustive();
+          switch (direction) {
+            case "Up": {
+              const next = getAbs(x, y - 1);
+              if (next === undefined || next === OBSTACLE) {
+                return Option.None();
+              } else {
+                return Option.Some({ x, y: y - 1 });
+              }
+            }
+            case "Right": {
+              const next = getAbs(x + 1, y);
+              if (next === undefined || next === OBSTACLE) {
+                return Option.None();
+              } else {
+                return Option.Some({ x: x + 1, y });
+              }
+            }
+            case "Down": {
+              const next = getAbs(x, y + 1);
+              if (next === undefined || next === OBSTACLE) {
+                return Option.None();
+              } else {
+                return Option.Some({ x, y: y + 1 });
+              }
+            }
+            case "Left": {
+              const next = getAbs(x - 1, y);
+              if (next === undefined || next === OBSTACLE) {
+                return Option.None();
+              } else {
+                return Option.Some({ x: x - 1, y });
+              }
+            }
+          }
         },
       );
       return Array.filterMap(
         deduplicatePositions(potentialPositions),
         potentialPosition => {
           const outcome = visit({
-            initialGuardPosition,
-            lineWidth,
             additionalObstacle: potentialPosition,
           });
           if (outcome.isError()) {
